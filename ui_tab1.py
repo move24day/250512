@@ -1,4 +1,4 @@
-# ui_tab1.py (디버깅 출력 추가됨 - 검색 및 저장 시 폴더 ID 사용하도록 수정)
+# ui_tab1.py (디버깅 출력 제거됨)
 
 import streamlit as st
 from datetime import datetime, date
@@ -38,7 +38,7 @@ try:
     UPLOAD_DIR = os.path.join(BASE_DIR, "uploads", "images")
     if not os.path.exists(UPLOAD_DIR):
         os.makedirs(UPLOAD_DIR)
-        print(f"INFO: Created UPLOAD_DIR at {UPLOAD_DIR}")
+        # print(f"INFO: Created UPLOAD_DIR at {UPLOAD_DIR}") # 운영 환경에서는 print문 제거 권장
 except PermissionError:
     st.error(f"권한 오류: 업로드 디렉토리({UPLOAD_DIR}) 생성 권한이 없습니다.")
     UPLOAD_DIR = None
@@ -57,10 +57,9 @@ def render_tab1():
     if 'card_payment' not in st.session_state:
         st.session_state.card_payment = False
 
-    # Google Drive 폴더 ID (st.secrets에서 가져오기)
     gdrive_folder_id_from_secrets = st.secrets.get("gcp_service_account", {}).get("drive_folder_id")
 
-    with st.container(border=True): # Google Drive Section
+    with st.container(border=True):
         st.subheader("☁️ Google Drive 연동")
         if gdrive_folder_id_from_secrets:
             st.caption(f"Google Drive의 지정된 폴더에 견적 파일을 저장하고 불러옵니다.")
@@ -73,7 +72,6 @@ def render_tab1():
             st.markdown("**견적 불러오기**")
             search_term = st.text_input("검색 (전화번호 전체 또는 끝 4자리)", key="gdrive_search_term_tab1", help="전체 전화번호 또는 전화번호 끝 4자리를 입력하세요.")
 
-            # --- 검색 버튼 로직 시작 (디버깅 코드 포함) ---
             if st.button("🔍 견적 검색", key="gdrive_search_button_tab1"):
                 st.session_state.gdrive_search_results = []
                 st.session_state.gdrive_file_options_map = {}
@@ -81,13 +79,7 @@ def render_tab1():
                 st.session_state.gdrive_selected_filename = None
                 search_term_strip = search_term.strip()
 
-                # 디버그 메시지 초기화용 빈 컨테이너 (선택적)
-                debug_container = st.empty()
-
                 if search_term_strip:
-                    debug_messages = [f"--- DEBUG: 검색어: '{search_term_strip}' ---"]
-                    debug_container.write("\n".join(debug_messages)) # 검색어 우선 표시
-
                     with st.spinner("🔄 Google Drive에서 JSON 검색 중..."):
                         all_gdrive_results = gdrive.find_files_by_name_contains(
                             search_term_strip,
@@ -95,51 +87,20 @@ def render_tab1():
                             folder_id=gdrive_folder_id_from_secrets
                         )
 
-                    # --- 여기가 중요: API 결과 및 필터링 과정 확인 ---
-                    debug_messages.append("--- DEBUG: API 결과 (all_gdrive_results): ---")
-                    # st.json은 너무 길어질 수 있으므로 파일 이름만 간단히 출력하거나 개수만 표시
-                    if all_gdrive_results:
-                         debug_messages.append(f"   (총 {len(all_gdrive_results)}개 파일 발견됨)")
-                         # 필요시 상위 몇 개 파일 이름만 출력
-                         # for idx, item in enumerate(all_gdrive_results[:5]):
-                         #     debug_messages.append(f"    - {item.get('name', '이름없음')}")
-                         # if len(all_gdrive_results) > 5:
-                         #     debug_messages.append("    ...")
-                    else:
-                         debug_messages.append("   결과 없음")
-                    debug_container.write("\n".join(debug_messages)) # API 결과 요약 업데이트
-
                     processed_results = []
                     if all_gdrive_results:
                         if len(search_term_strip) == 4 and search_term_strip.isdigit():
-                            debug_messages.append("--- DEBUG: 4자리 숫자 필터링 시작 ---")
                             for r_item in all_gdrive_results:
                                 file_name = r_item.get('name', '')
-                                if file_name: # 이름이 있는 경우에만 처리
+                                if file_name:
                                     try:
                                         file_name_stem = os.path.splitext(file_name)[0]
-                                        ends_with_check = file_name_stem.endswith(search_term_strip)
-                                        debug_messages.append(f"   - 파일: '{file_name}', 스템: '{file_name_stem}', endswith('{search_term_strip}')? -> {ends_with_check}")
-                                        if ends_with_check:
+                                        if file_name_stem.endswith(search_term_strip):
                                             processed_results.append(r_item)
-                                    except Exception as e_filter:
-                                        debug_messages.append(f"   - 파일 '{file_name}' 필터링 중 오류: {e_filter}")
-                                else:
-                                    debug_messages.append("   - 이름 없는 파일 발견됨 (처리 건너뜀)")
+                                    except Exception: # 파일 이름 처리 중 예외 발생 시 해당 파일 건너뜀
+                                        pass
                         else:
-                            debug_messages.append("--- DEBUG: 4자리 숫자 아님, 필터링 없이 진행 ---")
                             processed_results = all_gdrive_results
-
-                    debug_messages.append("--- DEBUG: 최종 결과 (processed_results): ---")
-                    if processed_results:
-                        debug_messages.append(f"   (총 {len(processed_results)}개 파일 필터링됨)")
-                        # 필요시 최종 결과 파일 이름 출력
-                        # for item in processed_results:
-                        #      debug_messages.append(f"    - {item.get('name', '이름없음')}")
-                    else:
-                        debug_messages.append("   결과 없음")
-                    debug_container.write("\n".join(debug_messages)) # 최종 결과 및 모든 디버그 메시지 표시
-                    # --- 디버깅 출력 끝 ---
 
                     if processed_results:
                         st.session_state.gdrive_search_results = processed_results
@@ -152,7 +113,6 @@ def render_tab1():
                         st.warning("⚠️ 해당 파일 없음.")
                 else:
                     st.warning("⚠️ 검색어를 입력하세요.")
-            # --- 검색 버튼 로직 끝 ---
 
             if st.session_state.get('gdrive_search_results'):
                 file_options_display = list(st.session_state.gdrive_file_options_map.keys())
@@ -165,7 +125,7 @@ def render_tab1():
                     except ValueError:
                         current_selection_index = 0
 
-                if not selected_filename_from_state and file_options_display: # 선택된 파일 없고, 옵션은 있을 때
+                if not selected_filename_from_state and file_options_display:
                     st.session_state.gdrive_selected_filename = file_options_display[0]
                     st.session_state.gdrive_selected_file_id = st.session_state.gdrive_file_options_map.get(file_options_display[0])
                     current_selection_index = 0
@@ -173,11 +133,10 @@ def render_tab1():
                 on_change_callback_gdrive = getattr(callbacks, 'update_selected_gdrive_id', None)
                 st.selectbox(
                     "불러올 JSON 파일 선택:", file_options_display,
-                    index=current_selection_index, # 현재 선택된 인덱스 사용
+                    index=current_selection_index,
                     key="gdrive_selected_filename_widget_tab1",
                     on_change=on_change_callback_gdrive if callable(on_change_callback_gdrive) else None
                 )
-                # 콜백 동기화 부분 제거 (on_change로 충분)
 
             load_button_disabled = not bool(st.session_state.get('gdrive_selected_file_id'))
             if st.button("📂 선택 견적 불러오기", disabled=load_button_disabled, key="load_gdrive_btn_tab1"):
@@ -331,8 +290,6 @@ def render_tab1():
                     try:
                         with open(final_save_path, "wb") as f: f.write(uploaded_file_obj.getbuffer())
                         newly_saved_paths_this_run.append(final_save_path)
-                        # 저장 성공 시 메시지 제거 또는 최소화 (선택적)
-                        # st.success(f"'{uploaded_file_obj.name}' 저장 완료: {final_filename_to_save}")
                     except Exception as e: st.error(f"'{uploaded_file_obj.name}' 저장 실패: {e}")
 
             if newly_saved_paths_this_run:
@@ -405,6 +362,10 @@ def render_tab1():
             st.subheader("📦 보관이사 추가 정보")
             storage_options = data.STORAGE_TYPE_OPTIONS if hasattr(data,'STORAGE_TYPE_OPTIONS') else []
             if 'storage_type' not in st.session_state:
+                st.session_state.storage_type = storage_options[0] if storage_options else None
+            # storage_type이 초기화되었는지, 그리고 유효한 옵션인지 확인
+            current_storage_type_val = st.session_state.get('storage_type')
+            if current_storage_type_val not in storage_options:
                 st.session_state.storage_type = storage_options[0] if storage_options else None
             current_storage_index = storage_options.index(st.session_state.storage_type) if st.session_state.storage_type in storage_options else 0
             st.radio("보관 유형 선택:", storage_options, index=current_storage_index, key="storage_type", horizontal=True)
