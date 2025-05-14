@@ -1,4 +1,4 @@
-# ui_tab1.py (디버깅 출력 제거됨)
+# ui_tab1.py
 
 import streamlit as st
 from datetime import datetime, date
@@ -6,12 +6,11 @@ import pytz
 import json
 import os
 import traceback
-import re # re 모듈 임포트 (직접 사용할 경우 대비)
+import re
 
-# Import necessary custom modules
 try:
     import data
-    import utils # utils 모듈 임포트
+    import utils
     import google_drive_helper as gdrive
     from state_manager import (
         MOVE_TYPE_OPTIONS,
@@ -30,15 +29,13 @@ except Exception as e:
     st.stop()
 
 try:
-    # __file__이 정의되지 않은 환경(예: 일부 배포 환경) 고려
     if "__file__" in locals():
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     else:
-        BASE_DIR = os.getcwd() # 현재 작업 디렉토리를 기본으로 사용
+        BASE_DIR = os.getcwd()
     UPLOAD_DIR = os.path.join(BASE_DIR, "uploads", "images")
     if not os.path.exists(UPLOAD_DIR):
         os.makedirs(UPLOAD_DIR)
-        # print(f"INFO: Created UPLOAD_DIR at {UPLOAD_DIR}") # 운영 환경에서는 print문 제거 권장
 except PermissionError:
     st.error(f"권한 오류: 업로드 디렉토리({UPLOAD_DIR}) 생성 권한이 없습니다.")
     UPLOAD_DIR = None
@@ -78,29 +75,34 @@ def render_tab1():
                 st.session_state.gdrive_selected_file_id = None
                 st.session_state.gdrive_selected_filename = None
                 search_term_strip = search_term.strip()
+                processed_results = []
 
                 if search_term_strip:
-                    with st.spinner("🔄 Google Drive에서 JSON 검색 중..."):
-                        all_gdrive_results = gdrive.find_files_by_name_contains(
-                            search_term_strip,
-                            mime_types="application/json",
-                            folder_id=gdrive_folder_id_from_secrets
-                        )
-
-                    processed_results = []
-                    if all_gdrive_results:
+                    with st.spinner("🔄 Google Drive에서 검색 중..."):
                         if len(search_term_strip) == 4 and search_term_strip.isdigit():
-                            for r_item in all_gdrive_results:
-                                file_name = r_item.get('name', '')
-                                if file_name:
-                                    try:
-                                        file_name_stem = os.path.splitext(file_name)[0]
-                                        if file_name_stem.endswith(search_term_strip):
-                                            processed_results.append(r_item)
-                                    except Exception: # 파일 이름 처리 중 예외 발생 시 해당 파일 건너뜀
-                                        pass
+                            all_json_files_in_folder = gdrive.find_files_by_name_contains(
+                                name_query="",
+                                mime_types="application/json",
+                                folder_id=gdrive_folder_id_from_secrets
+                            )
+                            if all_json_files_in_folder:
+                                for r_item in all_json_files_in_folder:
+                                    file_name = r_item.get('name', '')
+                                    if file_name:
+                                        try:
+                                            file_name_stem = os.path.splitext(file_name)[0]
+                                            if file_name_stem.isdigit() and file_name_stem.endswith(search_term_strip):
+                                                processed_results.append(r_item)
+                                        except Exception:
+                                            pass
                         else:
-                            processed_results = all_gdrive_results
+                            all_gdrive_results = gdrive.find_files_by_name_contains(
+                                name_query=search_term_strip,
+                                mime_types="application/json",
+                                folder_id=gdrive_folder_id_from_secrets
+                            )
+                            if all_gdrive_results:
+                                processed_results = all_gdrive_results
 
                     if processed_results:
                         st.session_state.gdrive_search_results = processed_results
@@ -110,7 +112,7 @@ def render_tab1():
                             st.session_state.gdrive_selected_file_id = processed_results[0].get('id')
                         st.success(f"✅ {len(processed_results)}개 검색 완료.")
                     else:
-                        st.warning("⚠️ 해당 파일 없음.")
+                        st.warning("⚠️ 해당 조건에 맞는 파일을 찾을 수 없습니다.")
                 else:
                     st.warning("⚠️ 검색어를 입력하세요.")
 
@@ -272,20 +274,22 @@ def render_tab1():
             current_tracked_filenames = {os.path.basename(p) for p in st.session_state.get('uploaded_image_paths', [])}
             img_phone_prefix = st.session_state.get('customer_phone', 'unknown_phone').strip()
             if not img_phone_prefix: img_phone_prefix = 'no_phone_img'
+            img_phone_prefix = utils.sanitize_phone_number(img_phone_prefix) # Ensure prefix is numbers only
 
             for uploaded_file_obj in uploaded_files:
                 original_filename_sanitized = "".join(c if c.isalnum() or c in ['.', '_'] else '_' for c in uploaded_file_obj.name)
                 name_part, ext_part = os.path.splitext(original_filename_sanitized)
-                base_filename = f"{img_phone_prefix}_{name_part}{ext_part}"
+                base_filename = f"{img_phone_prefix}_{name_part}{ext_part if ext_part else '.jpg'}" # Add extension if missing
                 counter = 1
                 filename_to_save = base_filename
                 prospective_save_path = os.path.join(UPLOAD_DIR, filename_to_save)
                 while os.path.exists(prospective_save_path):
-                    filename_to_save = f"{img_phone_prefix}_{name_part}_{counter}{ext_part}"
+                    filename_to_save = f"{img_phone_prefix}_{name_part}_{counter}{ext_part if ext_part else '.jpg'}"
                     prospective_save_path = os.path.join(UPLOAD_DIR, filename_to_save)
                     counter += 1
                 final_save_path = prospective_save_path
                 final_filename_to_save = os.path.basename(final_save_path)
+
                 if final_filename_to_save not in current_tracked_filenames and final_save_path not in newly_saved_paths_this_run :
                     try:
                         with open(final_save_path, "wb") as f: f.write(uploaded_file_obj.getbuffer())
@@ -310,18 +314,21 @@ def render_tab1():
                     if os.path.exists(image_path_to_delete): os.remove(image_path_to_delete); st.toast(f"삭제 성공: {os.path.basename(image_path_to_delete)}", icon="🗑️")
                     else: st.toast(f"파일 없음: {os.path.basename(image_path_to_delete)}", icon="⚠️")
                 except Exception as e_del: st.error(f"파일 삭제 오류 ({os.path.basename(image_path_to_delete)}): {e_del}")
+
                 paths_after_delete = st.session_state.get('uploaded_image_paths', [])
                 if image_path_to_delete in paths_after_delete:
                     paths_after_delete.remove(image_path_to_delete)
                     st.session_state.uploaded_image_paths = paths_after_delete
-                st.session_state.image_uploader_key_counter += 1
+                st.session_state.image_uploader_key_counter += 1 # Reset uploader
                 st.rerun()
 
-            paths_to_display_and_delete = list(current_image_paths)
+            paths_to_display_and_delete = list(current_image_paths) # Create a copy
             valid_display_paths = [p for p in paths_to_display_and_delete if isinstance(p, str) and os.path.exists(p)]
-            if len(valid_display_paths) != len(paths_to_display_and_delete):
-                st.session_state.uploaded_image_paths = valid_display_paths
-                if paths_to_display_and_delete: st.rerun()
+
+            if len(valid_display_paths) != len(paths_to_display_and_delete): # If some paths became invalid
+                st.session_state.uploaded_image_paths = valid_display_paths # Update state with only valid paths
+                if paths_to_display_and_delete: # If there was something to begin with, rerun to reflect change
+                    st.rerun()
 
             if valid_display_paths:
                 cols_per_row_display = 3
@@ -332,13 +339,13 @@ def render_tab1():
                         with cols_display[col_idx]:
                             try:
                                 st.image(img_path_display, caption=os.path.basename(img_path_display), use_container_width=True)
-                                delete_btn_key = f"del_btn_{img_path_display.replace('/', '_').replace('.', '_').replace(' ', '_')}_{i}_{col_idx}"
+                                delete_btn_key = f"del_btn_{img_path_display.replace(os.sep, '_').replace('.', '_').replace(' ', '_')}_{i}_{col_idx}"
                                 if st.button(f"삭제", key=delete_btn_key, type="secondary", help=f"{os.path.basename(img_path_display)} 삭제하기"):
-                                    delete_image_action(img_path_display)
+                                    delete_image_action(img_path_display) # This will trigger a rerun
                             except Exception as img_display_err:
                                 st.error(f"{os.path.basename(img_path_display)} 표시 오류: {img_display_err}")
             elif not current_image_paths : st.caption("업로드된 이미지가 없습니다.")
-            elif paths_to_display_and_delete and not valid_display_paths: st.caption("표시할 유효한 이미지가 없습니다.")
+            elif paths_to_display_and_delete and not valid_display_paths: st.caption("표시할 유효한 이미지가 없습니다. 경로를 확인해주세요.") # User hint
     else:
         st.warning("이미지 업로드 디렉토리 설정 오류로 이미지 업로드 기능이 비활성화되었습니다.")
 
@@ -363,19 +370,24 @@ def render_tab1():
             storage_options = data.STORAGE_TYPE_OPTIONS if hasattr(data,'STORAGE_TYPE_OPTIONS') else []
             if 'storage_type' not in st.session_state:
                 st.session_state.storage_type = storage_options[0] if storage_options else None
-            # storage_type이 초기화되었는지, 그리고 유효한 옵션인지 확인
+
             current_storage_type_val = st.session_state.get('storage_type')
-            if current_storage_type_val not in storage_options:
+            if current_storage_type_val not in storage_options: # Handle if current value is invalid
                 st.session_state.storage_type = storage_options[0] if storage_options else None
+
             current_storage_index = storage_options.index(st.session_state.storage_type) if st.session_state.storage_type in storage_options else 0
             st.radio("보관 유형 선택:", storage_options, index=current_storage_index, key="storage_type", horizontal=True)
             st.checkbox("🔌 보관 중 전기사용", key="storage_use_electricity")
+
             min_arrival_date = st.session_state.get('moving_date', date.today())
-            if not isinstance(min_arrival_date, date): min_arrival_date = date.today()
+            if not isinstance(min_arrival_date, date): min_arrival_date = date.today() # Fallback
+
             current_arrival_date = st.session_state.get('arrival_date')
             if not isinstance(current_arrival_date, date) or current_arrival_date < min_arrival_date:
-                st.session_state.arrival_date = min_arrival_date
+                st.session_state.arrival_date = min_arrival_date # Ensure arrival is not before moving
+
             st.date_input("🚚 도착 예정일 (보관 후)", key="arrival_date", min_value=min_arrival_date)
+
             moving_dt, arrival_dt = st.session_state.get('moving_date'), st.session_state.get('arrival_date')
             calculated_duration = max(1, (arrival_dt - moving_dt).days + 1) if isinstance(moving_dt,date) and isinstance(arrival_dt,date) and arrival_dt >= moving_dt else 1
             st.session_state.storage_duration = calculated_duration
@@ -385,5 +397,3 @@ def render_tab1():
     with st.container(border=True):
         st.header("🗒️ 고객 요구사항")
         st.text_area("기타 특이사항이나 요청사항을 입력해주세요.", height=100, key="special_notes")
-
-# --- End of render_tab1 function ---

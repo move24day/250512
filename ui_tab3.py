@@ -1,4 +1,4 @@
-# ui_tab3.py (결제 옵션 UI 제거, 요약 정보 표시 수정은 유지, Excel 및 이미지 생성/다운로드 통합)
+# ui_tab3.py
 import streamlit as st
 import pandas as pd
 import io
@@ -7,22 +7,19 @@ from datetime import datetime, date
 import traceback
 import re
 
-# Import necessary custom modules
 try:
     import data
     import utils
     import calculations
-    import pdf_generator # PDF 생성 및 이미지 변환에 필요
+    import pdf_generator
     import excel_filler
     import email_utils
     import callbacks
     from state_manager import MOVE_TYPE_OPTIONS
-    import mms_utils # MMS 발송에 필요
 except ImportError as e:
     st.error(f"UI Tab 3: 필수 모듈 로딩 실패 - {e}")
     if hasattr(e, "name"):
         if e.name == "email_utils": st.warning("email_utils.py 로드 실패. 이메일 발송 비활성화.")
-        elif e.name == "mms_utils": st.warning("mms_utils.py 로드 실패. MMS 발송 비활성화.")
         elif e.name == "pdf_generator": st.error("pdf_generator.py 로드 실패. PDF/이미지 생성 비활성화.")
     if "MOVE_TYPE_OPTIONS" not in globals(): MOVE_TYPE_OPTIONS = ["가정 이사 🏠", "사무실 이사 🏢"]
     if not all(module_name in globals() for module_name in ["data", "utils", "calculations", "callbacks", "state_manager"]):
@@ -63,7 +60,7 @@ def render_tab3():
     )
     st.divider()
 
-    with st.container(border=True): # 차량 선택
+    with st.container(border=True):
         st.subheader("🚚 차량 선택")
         col_v1_widget, col_v2_widget = st.columns([1, 2])
         with col_v1_widget:
@@ -102,7 +99,7 @@ def render_tab3():
                         if not current_manual_selection_widget and available_trucks_widget: st.session_state.manual_vehicle_select_value = available_trucks_widget[0]
                         st.selectbox("수동으로 차량 선택:", available_trucks_widget, index=current_index_widget, key="manual_vehicle_select_value", on_change=update_basket_quantities_callback)
                         if final_vehicle_from_state and final_vehicle_from_state in available_trucks_widget: st.info(f"ℹ️ 수동 선택됨: **{final_vehicle_from_state}**")
-            else: # Manual
+            else:
                 if not available_trucks_widget: st.error("❌ 현재 이사 유형에 선택 가능한 차량 정보가 없습니다.")
                 else:
                     current_manual_selection_widget = st.session_state.get("manual_vehicle_select_value")
@@ -117,7 +114,7 @@ def render_tab3():
                             st.caption(f"현재 이사짐 예상: {current_total_volume:.2f}m³, {current_total_weight:.2f}kg")
     st.divider()
 
-    with st.container(border=True): # 작업 조건 및 추가 옵션
+    with st.container(border=True):
         st.subheader("🛠️ 작업 조건 및 추가 옵션")
         sky_from, sky_to = (st.session_state.get("from_method") == "스카이 🏗️"), (st.session_state.get("to_method") == "스카이 🏗️")
         if sky_from or sky_to:
@@ -199,9 +196,9 @@ def render_tab3():
         if st.session_state.get("has_via_point", False):
              with cols_extra_fees[1]:
                 st.number_input("↪️ 경유지 추가요금", min_value=0, step=10000, key="via_point_surcharge", format="%d")
-        else:
+        else: # 경유지 없을 때 공간 채움
             with cols_extra_fees[1]:
-                pass
+                pass # 빈 공간으로 둠
     st.divider()
 
     st.header("💵 최종 견적 결과")
@@ -271,14 +268,13 @@ def render_tab3():
                     men_summary = p_info_summary.get('final_men', 0)
                     women_summary = p_info_summary.get('final_women', 0)
 
-                    if women_summary > 0:
-                        ppl_summary = f"{men_summary}+{women_summary}명"
-                    else:
-                        ppl_summary = f"{men_summary}명"
+                    ppl_summary = f"{men_summary}명" + (f"+{women_summary}명" if women_summary > 0 else "")
+
 
                     def get_method_full_name(method_key):
                         method_str = str(st.session_state.get(method_key, '')).strip()
                         return method_str.split(" ")[0] if method_str else "정보 없음"
+
                     from_method_full, to_method_full = get_method_full_name('from_method'), get_method_full_name('to_method')
 
                     deposit_for_summary = int(st.session_state.get("deposit_amount", 0))
@@ -319,7 +315,6 @@ def render_tab3():
                     payment_options_summary = " / ".join(payment_option_texts) if payment_option_texts else ""
 
                     first_line_display = f"{from_addr_summary if from_addr_summary else '출발지 정보 없음'} -> {to_addr_summary if to_addr_summary else '도착지 정보 없음'} {storage_prefix_text}{vehicle_tonnage_summary if vehicle_tonnage_summary else vehicle_type_summary}".strip()
-                    if email_summary and email_summary != '-': first_line_display += f" {email_summary}"
                     st.text(first_line_display)
 
                     if customer_name_summary: st.text(f"{customer_name_summary}")
@@ -385,33 +380,14 @@ def render_tab3():
 
             st.subheader("📄 견적서 생성, 발송 및 다운로드")
             can_generate_anything = bool(final_selected_vehicle_calc) and not has_cost_error and st.session_state.get("calculated_cost_items_for_pdf") and st.session_state.get("total_cost_for_pdf", 0) > 0
-            cols_actions_main = st.columns([1, 1, 1]); cols_actions_email = st.columns(1)
 
-            with cols_actions_main[0]: # MMS
-                st.markdown("**① 이미지 견적서 (MMS)**")
-                mms_possible = (hasattr(mms_utils, "send_mms_with_image") and hasattr(pdf_generator, "generate_pdf") and hasattr(pdf_generator, "generate_quote_image_from_pdf") and can_generate_anything and st.session_state.get("customer_phone"))
-                if mms_possible:
-                    if st.button("🖼️ MMS 발송", key="mms_send_button_main"):
-                        customer_phone_mms, customer_name_mms = st.session_state.get("customer_phone"), st.session_state.get("customer_name", "고객")
-                        pdf_args_mms = {"state_data": st.session_state.to_dict(), "calculated_cost_items": st.session_state.get("calculated_cost_items_for_pdf", []), "total_cost": st.session_state.get("total_cost_for_pdf", 0), "personnel_info": st.session_state.get("personnel_info_for_pdf", {})}
-                        with st.spinner("견적서 PDF 생성 중..."): pdf_bytes_mms = pdf_generator.generate_pdf(**pdf_args_mms)
-                        if pdf_bytes_mms:
-                            with st.spinner("PDF를 이미지로 변환 중..."): image_bytes_mms = pdf_generator.generate_quote_image_from_pdf(pdf_bytes_mms, poppler_path=None)
-                            if image_bytes_mms:
-                                with st.spinner(f"{customer_phone_mms}으로 MMS 발송 준비 중..."):
-                                    mms_filename, mms_text_message = f"견적서_{customer_name_mms}_{utils.get_current_kst_time_str('%y%m%d')}.jpg", f"{customer_name_mms}님, 요청하신 이사 견적서입니다. 감사합니다."
-                                    mms_sent = mms_utils.send_mms_with_image(recipient_phone=customer_phone_mms, image_bytes=image_bytes_mms, filename=mms_filename, text_message=mms_text_message)
-                                    if mms_sent: st.success(f"✅ MMS 발송 요청 완료")
-                                    else: st.error("❌ MMS 발송 실패.")
-                            else: st.error("❌ 견적서 이미지 생성 실패.")
-                        else: st.error("❌ 견적서 PDF 생성 실패 (MMS용).")
-                elif not (hasattr(mms_utils, "send_mms_with_image") and hasattr(pdf_generator, "generate_pdf") and hasattr(pdf_generator, "generate_quote_image_from_pdf")): st.caption("MMS/PDF/이미지 생성 모듈 오류")
-                elif not can_generate_anything: st.caption("견적 내용 확인 필요")
-                elif not st.session_state.get("customer_phone"): st.caption("고객 전화번호 필요")
-                else: st.caption("MMS 발송 불가")
+            # MMS 기능 제거로 컬럼 수 변경 (예: 2개로)
+            cols_actions_main = st.columns(2) # 3개에서 2개로 변경
+            cols_actions_email = st.columns(1) # 이메일은 그대로 1개 컬럼
 
-            with cols_actions_main[1]: # PDF
-                st.markdown("**② 고객용 견적서 (PDF)**")
+            # cols_actions_main[0] 이 PDF, cols_actions_main[1] 이 Excel 및 이미지
+            with cols_actions_main[0]: # PDF (기존 cols_actions_main[1]의 내용)
+                st.markdown("**① 고객용 견적서 (PDF)**")
                 pdf_possible = hasattr(pdf_generator, "generate_pdf") and can_generate_anything
                 if pdf_possible:
                     if st.button("📄 PDF 생성 및 다운로드", key="pdf_customer_download_main"):
@@ -431,11 +407,8 @@ def render_tab3():
                 elif not can_generate_anything: st.caption("견적 내용 확인 필요")
                 else: st.caption("PDF 생성 불가")
 
-
-            # --- 수정된 "Excel 및 견적 이미지 생성" 섹션 ---
-            with cols_actions_main[2]:
-                st.markdown("**③ 견적서 파일 생성 (Excel, 이미지)**")
-
+            with cols_actions_main[1]: # Excel 및 견적 이미지 (기존 cols_actions_main[2]의 내용)
+                st.markdown("**② 견적서 파일 생성 (Excel, 이미지)**")
                 excel_possible = hasattr(excel_filler, "fill_final_excel_template") and bool(final_selected_vehicle_calc)
                 pdf_possible_for_image = hasattr(pdf_generator, "generate_pdf") and can_generate_anything
                 image_conversion_possible = hasattr(pdf_generator, "generate_quote_image_from_pdf") and pdf_generator._PDF2IMAGE_AVAILABLE and pdf_generator._PILLOW_AVAILABLE
@@ -444,7 +417,6 @@ def render_tab3():
                     actions_success_excel = False
                     actions_success_image = False
 
-                    # 1. Excel 생성
                     if excel_possible:
                         latest_total_cost_excel, latest_cost_items_excel, latest_personnel_info_excel = calculations.calculate_total_moving_cost(st.session_state.to_dict())
                         with st.spinner("Excel 파일 생성 중..."):
@@ -459,7 +431,6 @@ def render_tab3():
                     else:
                         st.warning("Excel을 생성할 수 없습니다. (조건 미충족)")
 
-                    # 2. PDF 생성 및 이미지 변환
                     if pdf_possible_for_image and image_conversion_possible:
                         customer_name_img = st.session_state.get("customer_name", "고객")
                         pdf_args_img = {
@@ -470,11 +441,9 @@ def render_tab3():
                         }
                         with st.spinner("견적서 PDF 생성 중 (이미지용)..."):
                             pdf_bytes_img = pdf_generator.generate_pdf(**pdf_args_img)
-
                         if pdf_bytes_img:
                             with st.spinner("PDF를 이미지로 변환 중..."):
-                                image_bytes_converted = pdf_generator.generate_quote_image_from_pdf(pdf_bytes_img, poppler_path=None, image_format='JPEG') # JPEG 또는 PNG
-
+                                image_bytes_converted = pdf_generator.generate_quote_image_from_pdf(pdf_bytes_img, poppler_path=None, image_format='JPEG')
                             if image_bytes_converted:
                                 st.session_state['quote_image_data_for_download'] = image_bytes_converted
                                 st.success("✅ 견적서 이미지 변환 완료!")
@@ -497,9 +466,6 @@ def render_tab3():
                     elif not actions_success_image :
                          st.warning("견적서 이미지 생성에 실패했습니다.")
 
-
-                # --- 다운로드 버튼 영역 ---
-                # Excel 다운로드 버튼
                 if st.session_state.get('final_excel_data_for_download') and excel_possible:
                     fname_excel_dl = f"최종견적서_{st.session_state.get('customer_name', '고객')}_{utils.get_current_kst_time_str('%y%m%d')}.xlsx"
                     st.download_button(
@@ -512,25 +478,21 @@ def render_tab3():
                 elif excel_possible : st.caption("파일 생성 버튼을 눌러 Excel 파일을 준비하세요.")
                 else: st.caption("Excel 생성 불가 (견적 내용 또는 모듈 확인)")
 
-
-                # 이미지 다운로드 버튼
                 if st.session_state.get('quote_image_data_for_download') and pdf_possible_for_image and image_conversion_possible:
-                    image_format_ext = 'jpg' # generate_quote_image_from_pdf 에서 JPEG로 저장한 경우
-                    # image_format_ext = 'png' # PNG로 저장한 경우
+                    image_format_ext = 'jpg'
                     fname_image_dl = f"견적서이미지_{st.session_state.get('customer_name', '고객')}_{utils.get_current_kst_time_str('%y%m%d')}.{image_format_ext}"
                     st.download_button(
                         label=f"🖼️ 다운로드 (견적서 이미지 .{image_format_ext})",
                         data=st.session_state['quote_image_data_for_download'],
                         file_name=fname_image_dl,
-                        mime=f"image/{image_format_ext.lower()}", # image/jpeg 또는 image/png
+                        mime=f"image/{image_format_ext.lower()}",
                         key='dl_btn_quote_image_final_section'
                     )
                 elif pdf_possible_for_image and image_conversion_possible: st.caption("파일 생성 버튼을 눌러 견적서 이미지를 준비하세요.")
                 else: st.caption("견적서 이미지 생성 불가 (견적 내용 또는 PDF/이미지 변환 모듈 확인)")
-            # --- 수정된 섹션 끝 ---
 
-            with cols_actions_email[0]: # Email
-                st.markdown("**④ 견적서 이메일 발송 (PDF 첨부)**")
+            with cols_actions_email[0]:
+                st.markdown("**③ 견적서 이메일 발송 (PDF 첨부)**") # 번호 수정
                 email_possible = (hasattr(email_utils, "send_quote_email") and hasattr(pdf_generator, "generate_pdf") and can_generate_anything and st.session_state.get("customer_email"))
                 if email_possible:
                     if st.button("📧 이메일 발송", key="email_send_button_main"):
@@ -552,7 +514,5 @@ def render_tab3():
         except Exception as calc_err_outer_display:
             st.error(f"최종 견적 표시 중 외부 오류 발생: {calc_err_outer_display}")
             traceback.print_exc()
-    else: # 차량 미선택 시
+    else:
         st.warning("⚠️ **차량을 먼저 선택해주세요.** 비용 계산, 요약 정보 표시 및 다운로드는 차량 선택 후 가능합니다.")
-
-# --- End of render_tab3 function ---
